@@ -20,6 +20,7 @@ extern "C"
 AVFrame* ffmpeg_pFrame;
 AVFormatContext* ffmpeg_pFormatCtx;
 AVStream* ffmpeg_pVideoStream;
+AVCodecContext* ffmpeg_pVideoCtx;
 int ffmpeg_videoStreamIndex;
 size_t ffmpeg_frameWidth, ffmpeg_frameHeight;
 
@@ -70,20 +71,27 @@ void ffmpeg_init()
 
 	for(int i = 0; i < ffmpeg_pFormatCtx->nb_streams; i++)
 	{
-		AVCodecContext *enc = ffmpeg_pFormatCtx->streams[i]->codec;
-		if( AVMEDIA_TYPE_VIDEO == enc->codec_type && ffmpeg_videoStreamIndex < 0 )
+		// Updated to avoid using ffmpeg_pFormatCtx->streams[i]->codec (deprecated) as from	 https://code.mythtv.org/trac/ticket/13186
+		auto *stream = ffmpeg_pFormatCtx->streams[i];
+		AVCodec *pCodec = avcodec_find_decoder(stream->codecpar->codec_id);
+		
+		if (AVMEDIA_TYPE_VIDEO == pCodec->type && ffmpeg_videoStreamIndex < 0 )
 		{
-			AVCodec *pCodec = avcodec_find_decoder(enc->codec_id);
+			ffmpeg_pVideoCtx = avcodec_alloc_context3(pCodec);
+			avcodec_parameters_to_context(ffmpeg_pVideoCtx, stream->codecpar);
+			// TODO: is this necessary?
+			av_codec_set_pkt_timebase(ffmpeg_pVideoCtx, stream->time_base);
+			
 			AVDictionary *opts = NULL;
 			av_dict_set(&opts, "flags2", "+export_mvs", 0);
-			if (!pCodec || avcodec_open2(enc, pCodec, &opts) < 0)
+			if (!pCodec || avcodec_open2(ffmpeg_pVideoCtx, pCodec, &opts) < 0)
 				throw std::runtime_error("Codec not found or cannot open codec.");
-
+			
 			ffmpeg_videoStreamIndex = i;
 			ffmpeg_pVideoStream = ffmpeg_pFormatCtx->streams[i];
-			ffmpeg_frameWidth = enc->width;
-			ffmpeg_frameHeight = enc->height;
-
+			ffmpeg_frameWidth = ffmpeg_pVideoCtx->width;
+			ffmpeg_frameHeight = ffmpeg_pVideoCtx->height;
+			
 			break;
 		}
 	}
@@ -97,7 +105,7 @@ bool process_frame(AVPacket *pkt)
 	av_frame_unref(ffmpeg_pFrame);
 
 	int got_frame = 0;
-	int ret = avcodec_decode_video2(ffmpeg_pVideoStream->codec, ffmpeg_pFrame, &got_frame, pkt);
+	int ret = avcodec_decode_video2(ffmpeg_pVideoCtx, ffmpeg_pFrame, &got_frame, pkt);
 	if (ret < 0)
 		return false;
 
