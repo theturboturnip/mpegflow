@@ -1,3 +1,6 @@
+# THIS IS A FORK
+This is a fork of the original [**mpegflow** program](https://github.com/vadimkantorov/mpegflow), the rest of this README is from the original repo.
+
 # Information & Contact
 
 We release **mpegflow** for easy extraction of MPEG-flow (motion vectors) from video files along with a visualization tool **vis**, both under the [MIT license](http://github.com/vadimkantorov/mpegflow/blob/master/LICENSE). We provide Makefiles for Linux / Windows and distribute [binary releases](http://github.com/vadimkantorov/mpegflow/releases).
