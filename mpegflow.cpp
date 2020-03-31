@@ -17,8 +17,6 @@ extern "C"
 #include <vector>
 #include <stdexcept>
 
-using namespace std;
-
 AVFrame* ffmpeg_pFrame;
 AVFormatContext* ffmpeg_pFormatCtx;
 AVStream* ffmpeg_pVideoStream;
@@ -144,7 +142,7 @@ bool read_packets()
 	return process_frame(&pkt);
 }
 
-bool read_frame(int64_t& pts, char& pictType, vector<AVMotionVector>& motion_vectors)
+bool read_frame(int64_t& pts, char& pictType, std::vector<AVMotionVector>& motion_vectors)
 {
 	if(!read_packets())
 		return false;
@@ -159,11 +157,11 @@ bool read_frame(int64_t& pts, char& pictType, vector<AVMotionVector>& motion_vec
 		AVFrameSideData* sd = av_frame_get_side_data(ffmpeg_pFrame, AV_FRAME_DATA_MOTION_VECTORS);
 		AVMotionVector* mvs = (AVMotionVector*)sd->data;
 		int mvcount = sd->size / sizeof(AVMotionVector);
-		motion_vectors = vector<AVMotionVector>(mvs, mvs + mvcount);
+		motion_vectors = std::vector<AVMotionVector>(mvs, mvs + mvcount);
 	}
 	else
 	{
-		motion_vectors = vector<AVMotionVector>();
+		motion_vectors = std::vector<AVMotionVector>();
 	}
 
 	return true;
@@ -174,7 +172,7 @@ struct FrameInfo
 	const static size_t MAX_GRID_SIZE = 512;
 
 	size_t GridStep;
-	pair<size_t, size_t> Shape;
+    std::pair<size_t, size_t> Shape;
 
 	int dx[MAX_GRID_SIZE][MAX_GRID_SIZE];
 	int dy[MAX_GRID_SIZE][MAX_GRID_SIZE];
@@ -287,7 +285,7 @@ struct FrameInfo
 
 const size_t FrameInfo::MAX_GRID_SIZE;
 
-void output_vectors_raw(int frameIndex, int64_t pts, char pictType, vector<AVMotionVector>& motionVectors)
+void output_vectors_raw(int frameIndex, int64_t pts, char pictType, std::vector<AVMotionVector>& motionVectors)
 {
 	printf("# pts=%lld frame_index=%d pict_type=%c output_type=raw shape=%zux4\n", (long long) pts, frameIndex, pictType, motionVectors.size());
 	for(int i = 0; i < motionVectors.size(); i++)
@@ -300,12 +298,12 @@ void output_vectors_raw(int frameIndex, int64_t pts, char pictType, vector<AVMot
 	}
 }
 
-void output_vectors_std(int frameIndex, int64_t pts, char pictType, vector<AVMotionVector>& motionVectors)
+void output_vectors_std(int frameIndex, int64_t pts, char pictType, std::vector<AVMotionVector>& motionVectors)
 {
-	static vector<FrameInfo> prev;
+	static std::vector<FrameInfo> prev;
 
 	size_t gridStep = ARG_FORCE_GRID_8 ? 8 : 16;
-	pair<size_t, size_t> shape = make_pair(min(ffmpeg_frameHeight / gridStep, FrameInfo::MAX_GRID_SIZE), min(ffmpeg_frameWidth / gridStep, FrameInfo::MAX_GRID_SIZE));
+    std::pair<size_t, size_t> shape = std::make_pair(std::min(ffmpeg_frameHeight / gridStep, FrameInfo::MAX_GRID_SIZE), std::min(ffmpeg_frameWidth / gridStep, FrameInfo::MAX_GRID_SIZE));
 
 	if(!prev.empty() && pts != prev.back().Pts + 1)
 	{
@@ -336,8 +334,8 @@ void output_vectors_std(int frameIndex, int64_t pts, char pictType, vector<AVMot
 		int mvdx = mv.dst_x - mv.src_x;
 		int mvdy = mv.dst_y - mv.src_y;
 
-		size_t i_clipped = max(size_t(0), min(mv.dst_y / cur.GridStep, cur.Shape.first - 1)); 
-		size_t j_clipped = max(size_t(0), min(mv.dst_x / cur.GridStep, cur.Shape.second - 1));
+		size_t i_clipped = std::max(size_t(0), std::min(mv.dst_y / cur.GridStep, cur.Shape.first - 1)); 
+		size_t j_clipped = std::max(size_t(0), std::min(mv.dst_x / cur.GridStep, cur.Shape.second - 1));
 
 		cur.Empty = false;
 		cur.dx[i_clipped][j_clipped] = mvdx;
@@ -403,7 +401,7 @@ int main(int argc, const char* argv[])
 		
 	int64_t pts, prev_pts = -1;
 	char pictType;
-	vector<AVMotionVector> motionVectors;
+    std::vector<AVMotionVector> motionVectors;
 
 	for(int frameIndex = 1; read_frame(pts, pictType, motionVectors); frameIndex++)
 	{
