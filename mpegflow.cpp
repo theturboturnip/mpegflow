@@ -156,8 +156,10 @@ bool read_frame(int64_t& pts, char& pictType, std::vector<AVMotionVector>& motio
         return false;
     
     pictType = av_get_picture_type_char(ffmpeg_pFrame->pict_type);
-    // fragile, consult fresh f_select.c and ffprobe.c when updating ffmpeg
-    pts = ffmpeg_pFrame->pkt_pts != AV_NOPTS_VALUE ? ffmpeg_pFrame->pkt_pts : (ffmpeg_pFrame->pkt_dts != AV_NOPTS_VALUE ? ffmpeg_pFrame->pkt_dts : pts + 1);
+
+    // pts = Presentation TimeStamp
+    // Try to take it from the pFrame, if it isn't present then try the packet Decode TimeStamp, otherwise just increment the current value of pts
+    pts = ffmpeg_pFrame->pts != AV_NOPTS_VALUE ? ffmpeg_pFrame->pts : (ffmpeg_pFrame->pkt_dts != AV_NOPTS_VALUE ? ffmpeg_pFrame->pkt_dts : pts + 1);
     bool noMotionVectors = av_frame_get_side_data(ffmpeg_pFrame, AV_FRAME_DATA_MOTION_VECTORS) == NULL;
     if(!noMotionVectors)
     {
