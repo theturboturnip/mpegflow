@@ -12,10 +12,16 @@ extern "C"
     #include <libavutil/motion_vector.h>
 }
 
+// Fix for av_err2str which stops taking the address of a temporary
+// https://ffmpeg.org/pipermail/libav-user/2013-January/003458.html
+#undef av_err2str
+#define av_err2str(errnum) av_make_error_string((char*)__builtin_alloca(AV_ERROR_MAX_STRING_SIZE), AV_ERROR_MAX_STRING_SIZE, errnum)
+
 #include <string>
 #include <algorithm>
 #include <vector>
 #include <stdexcept>
+#include <functional>
 
 AVFrame* ffmpeg_pFrame;
 AVFormatContext* ffmpeg_pFormatCtx;
@@ -69,6 +75,7 @@ void ffmpeg_init()
         throw std::runtime_error("Stream information not found.");
     }
 
+    // Identify the video stream and get all of the information out into static variables
     for(int i = 0; i < ffmpeg_pFormatCtx->nb_streams; i++)
     {
         // Updated to avoid using ffmpeg_pFormatCtx->streams[i]->codec (deprecated) as from  https://code.mythtv.org/trac/ticket/13186
@@ -100,6 +107,7 @@ void ffmpeg_init()
         throw std::runtime_error("Video stream not found.");
 }
 
+/*
 bool process_frame(AVPacket *pkt)
 {
     av_frame_unref(ffmpeg_pFrame);
@@ -109,7 +117,7 @@ bool process_frame(AVPacket *pkt)
     if (ret < 0)
         return false;
 
-    ret = FFMIN(ret, pkt->size); /* guard against bogus return values */
+    ret = FFMIN(ret, pkt->size);
     pkt->data += ret;
     pkt->size -= ret;
     return got_frame > 0;
@@ -150,10 +158,17 @@ bool read_packets()
     return process_frame(&pkt);
 }
 
+// This function reads a single frame from the ffmpeg stream, and extracts the motion vectors.
+// Returns true if a frame was read and motion vectors were found, false otherwise.
 bool read_frame(int64_t& pts, char& pictType, std::vector<AVMotionVector>& motion_vectors)
 {
     if(!read_packets())
-        return false;
+      return false;
+
+    static AVPacket* pkt_ptr = NULL;
+   
+    if (pkt_ptr == NULL) 
+    // Read the packet from the 
     
     pictType = av_get_picture_type_char(ffmpeg_pFrame->pict_type);
 
@@ -175,6 +190,68 @@ bool read_frame(int64_t& pts, char& pictType, std::vector<AVMotionVector>& motio
     }
 
     return true;
+    }
+*/
+
+int for_each_frame(std::function<void(int64_t, char)> callback, std::vector<AVMotionVector>& motionVectors) {
+    AVPacket pkt;
+    AVFrame* frame = av_frame_alloc();
+    int ret;
+
+    while (true) {
+        ret = av_read_frame(ffmpeg_pFormatCtx, &pkt);
+        if (ret != 0)
+            return ret;
+
+        if (pkt.stream_index == ffmpeg_videoStreamIndex) {
+            // We know this is a video packet, now extract the frames
+
+            // Send the packet to the video decoder
+            ret = avcodec_send_packet(ffmpeg_pVideoCtx, &pkt);
+            if (ret != 0)
+                return ret;
+
+            // One packet can contain multiple frames, so extract each one in turn
+            while (ret >= 0) {
+                // Get a frame
+                ret = avcodec_receive_frame(ffmpeg_pVideoCtx, frame);
+                if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
+                    // Either the packet has ended (AVERROR_EOF) or it needs more packets to fully extract the data (EAGAIN).
+                    // Break out and send it another video packet, then try again.
+                    break;
+                } else if (ret < 0) {
+                    // An unexpected error occurred
+                    return ret;
+                }
+
+                // We have a valid frame, process it
+                int64_t pts = av_frame_get_best_effort_timestamp(frame);
+                char pictType = av_get_picture_type_char(ffmpeg_pFrame->pict_type);
+
+                bool noMotionVectors = av_frame_get_side_data(frame, AV_FRAME_DATA_MOTION_VECTORS) == NULL;
+                if(!noMotionVectors)
+                {
+                    // reading motion vectors, see ff_print_debug_info2 in ffmpeg's libavcodec/mpegvideo.c for reference and a fresh doc/examples/extract_mvs.c
+                    AVFrameSideData* sd = av_frame_get_side_data(frame, AV_FRAME_DATA_MOTION_VECTORS);
+                    AVMotionVector* mvs = (AVMotionVector*)sd->data;
+                    int mvcount = sd->size / sizeof(AVMotionVector);
+                    motionVectors = std::vector<AVMotionVector>(mvs, mvs + mvcount);
+                }
+                else
+                {
+                    motionVectors = std::vector<AVMotionVector>();
+                }
+
+                // Call the callback
+                callback(pts, pictType);
+
+                // No need to unref the frame here, avcodec_receive_frame does that automatically
+            }
+        }
+
+        av_frame_unref(frame);
+        av_packet_unref(&pkt);
+    }
 }
 
 struct FrameInfo
@@ -410,16 +487,19 @@ int main(int argc, const char* argv[])
     ffmpeg_init();
         
     int64_t pts, prev_pts = -1;
+    int frameIndex = 0;
     char pictType;
     std::vector<AVMotionVector> motionVectors;
 
-    for(int frameIndex = 1; read_frame(pts, pictType, motionVectors); frameIndex++)
-    {
+    auto frameCallback = [&](int64_t newPts, char newPictType) {
+        pts = newPts;
+        pictType = newPictType;
+
         if(pts <= prev_pts && prev_pts != -1)
         {
             if(!ARG_QUIET)
                 fprintf(stderr, "Skipping frame %d (frame with pts %d already processed).\n", int(frameIndex), int(pts));
-            continue;
+            return;
         }
 
         if(ARG_OUTPUT_RAW_MOTION_VECTORS)
@@ -428,7 +508,14 @@ int main(int argc, const char* argv[])
             output_vectors_std(frameIndex, pts, pictType, motionVectors);
 
         prev_pts = pts;
+    };
+    int ret = for_each_frame(frameCallback, motionVectors);
+
+    if (ret < 0 && ret != AVERROR_EOF) {
+        fprintf(stderr, "Error occurred: %s\n", av_err2str(ret));
+        exit(1);
     }
+
     if(ARG_OUTPUT_RAW_MOTION_VECTORS == false)
         output_vectors_std(-1, pts, pictType, motionVectors);
 }
