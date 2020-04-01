@@ -142,11 +142,10 @@ int for_each_frame(std::function<void(int64_t, char)> callback, std::vector<AVMo
                 int64_t pts = av_frame_get_best_effort_timestamp(frame);
                 char pictType = av_get_picture_type_char(ffmpeg_pFrame->pict_type);
 
-                bool noMotionVectors = av_frame_get_side_data(frame, AV_FRAME_DATA_MOTION_VECTORS) == NULL;
-                if(!noMotionVectors)
+                AVFrameSideData* sd = av_frame_get_side_data(frame, AV_FRAME_DATA_MOTION_VECTORS);
+                if(sd != NULL)
                 {
                     // reading motion vectors, see ff_print_debug_info2 in ffmpeg's libavcodec/mpegvideo.c for reference and a fresh doc/examples/extract_mvs.c
-                    AVFrameSideData* sd = av_frame_get_side_data(frame, AV_FRAME_DATA_MOTION_VECTORS);
                     AVMotionVector* mvs = (AVMotionVector*)sd->data;
                     int mvcount = sd->size / sizeof(AVMotionVector);
                     motionVectors = std::vector<AVMotionVector>(mvs, mvs + mvcount);
@@ -255,7 +254,7 @@ struct FrameInfo
         {
             for(int j = 0; j < Shape.second; j++)
             {
-                printf("%d\t", dx[i][j]);
+                printf("%4d", dx[i][j]);
             }
             printf("\n");
         }
@@ -263,7 +262,7 @@ struct FrameInfo
         {
             for(int j = 0; j < Shape.second; j++)
             {
-                printf("%d\t", dy[i][j]);
+                printf("%4d", dy[i][j]);
             }
             printf("\n");
         }
@@ -274,7 +273,7 @@ struct FrameInfo
             {
                 for(int j = 0; j < Shape.second; j++)
                 {
-                    printf("%d\t", occupancy[i][j]);
+                    printf("%4d", occupancy[i][j]);
                 }
                 printf("\n");
             }
@@ -295,7 +294,12 @@ void output_vectors_raw(int frameIndex, int64_t pts, char pictType, std::vector<
         int mvdx = mv.dst_x - mv.src_x;
         int mvdy = mv.dst_y - mv.src_y;
 
-        printf("%d\t%d\t%d\t%d\n", mv.dst_x, mv.dst_y, mvdx, mvdy);
+        if (mvdx != 0 || mvdy != 0)
+            printf("%d\t%d\t%d\t%d\n", mv.dst_x, mv.dst_y, mvdx, mvdy);
+        /*printf("%d,\t%2d,\t%2d,\t%2d,\t%4d,\t%4d,\t%4d\n",
+                        mv->source,
+                        mv->w, mv->h, mv->src_x, mv->src_y,
+                        mv->dst_x, mv->dst_y);*/
     }
 }
 
@@ -306,7 +310,7 @@ void output_vectors_std(int frameIndex, int64_t pts, char pictType, std::vector<
     size_t gridStep = ARG_FORCE_GRID_8 ? 8 : 16;
     std::pair<size_t, size_t> shape = std::make_pair(std::min(ffmpeg_frameHeight / gridStep, FrameInfo::MAX_GRID_SIZE), std::min(ffmpeg_frameWidth / gridStep, FrameInfo::MAX_GRID_SIZE));
 
-    if(!prev.empty() && pts != prev.back().Pts + 1)
+    /*if(!prev.empty() && pts != prev.back().Pts + 1)
     {
         for(int64_t dummy_pts = prev.back().Pts + 1; dummy_pts < pts; dummy_pts++)
         {
@@ -319,7 +323,7 @@ void output_vectors_std(int frameIndex, int64_t pts, char pictType, std::vector<
             dummy.Shape = shape;
             prev.push_back(dummy);
         }
-    }
+    }*/
 
     FrameInfo cur;
     cur.FrameIndex = frameIndex;
@@ -406,6 +410,7 @@ int main(int argc, const char* argv[])
     std::vector<AVMotionVector> motionVectors;
 
     auto frameCallback = [&](int64_t newPts, char newPictType) {
+        frameIndex++;
         pts = newPts;
         pictType = newPictType;
 
